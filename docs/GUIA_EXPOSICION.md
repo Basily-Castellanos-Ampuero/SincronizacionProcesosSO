@@ -89,18 +89,19 @@ FIFO al despertar procesos, por eso a veces entra un auto que llegó después.)
 
 | Concepto | Dónde está |
 |---|---|
-| Memoria compartida entre procesos | `estacionamiento.c:160` (`mmap` con `MAP_SHARED`) |
-| Creación de semáforos entre procesos (`pshared = 1`) | `estacionamiento.c:168-170` (`sem_init`) |
-| Creación de procesos | `estacionamiento.c:184` (`fork()`) |
-| Semáforo contador: esperar espacio | `estacionamiento.c:93-95` |
-| Exclusión mutua de la barrera | `estacionamiento.c:99` (`sem_wait(barrera)`) |
-| Sección crítica: ocupar plaza | `estacionamiento.c:104-125` |
-| Salida y liberar plaza | `estacionamiento.c:132-142` |
-| Devolver espacio, despertar a otro | `estacionamiento.c:145` (`sem_post(espacios)`) |
-| Padre espera a los hijos (sin zombis) | `estacionamiento.c:200` (`wait`) |
-| Liberar recursos | `estacionamiento.c:215-217` (`sem_destroy`) y `munmap` |
-| Condición de carrera (leer-modificar-escribir) | `sin_sincronizacion.c:114-116` |
-| Espera activa | `sin_sincronizacion.c:87` |
+| Memoria compartida entre procesos | `estacionamiento.c:162` (`mmap` con `MAP_SHARED`) |
+| Creación de semáforos entre procesos (`pshared = 1`) | `estacionamiento.c:170-172` (`sem_init`) |
+| Creación de procesos | `estacionamiento.c:185` (`fork()`) |
+| Semáforo contador: esperar espacio | `estacionamiento.c:67-70` |
+| Exclusión mutua de la barrera | `estacionamiento.c:75` (`sem_wait(barrera)`) |
+| Sección crítica: ocupar plaza | `estacionamiento.c:81-101` |
+| Salida y liberar plaza | `estacionamiento.c:109-119` |
+| Devolver espacio, despertar a otro | `estacionamiento.c:122` (`sem_post(espacios)`) |
+| El padre lee el estado para dibujar (también usa el mutex) | `estacionamiento.c:127-140` (`tomar_foto`) |
+| Padre espera a los hijos (sin zombis) | `estacionamiento.c:203` (`waitpid`) |
+| Liberar recursos | `estacionamiento.c:230-232` (`sem_destroy`) y `munmap` |
+| Condición de carrera (leer-modificar-escribir) | `sin_sincronizacion.c:97-99` |
+| Espera activa | `sin_sincronizacion.c:68` |
 
 ## 4. Guion de la demostración (≈ 5 min)
 
@@ -112,29 +113,33 @@ FIFO al despertar procesos, por eso a veces entra un auto que llegó después.)
    ```bash
    make run-sin
    ```
-   Señalar:
-   - Varios autos "cruzan la barrera" en el mismo instante.
-   - Mensajes `CHOQUE`: dos autos en el mismo espacio.
-   - `autos dentro=5/3`: más autos que espacios.
-   - En el resumen, `Contador al final` distinto de 0 (actualizaciones perdidas).
+   Señalar en el panel:
+   - `BARRERA` en rojo con varios autos: `▶ A2 entra ▶ A4 entra ... ¡4 autos a la vez!`
+   - Casillas rojas `2 AUTOS`: dos autos en el mismo espacio (y eventos `CHOQUE`).
+   - `OCUPACIÓN` con bloques rojos de más y `¡SOBRECUPO!` (por ejemplo `5/3 dentro`).
+   - `CONTADOR` en rojo: `ocupados = -3  ✘ no coincide` (actualizaciones perdidas).
+   - `SEMÁFOROS: ninguno`.
+   - El resumen final con las marcas ✘.
    - Si en esa corrida no salió error, ejecutar otra vez y explicar por qué
      (la carrera depende del tiempo: eso es justamente lo peligroso).
 3. **Mostrar la solución**:
    ```bash
    make run
    ```
-   Señalar:
-   - El dibujo `[A1 ][A2 ][A3 ]`: nunca más de 3, nunca repetidos.
-   - Cuando está lleno aparecen `ESPERA`; cuando uno `SALE`, enseguida otro
-     `cruza la barrera`.
-   - Los cruces de barrera están separados en el tiempo (uno a la vez).
-   - Resumen: `OK`.
+   Señalar en el panel:
+   - Las casillas: nunca más de 3 autos, nunca dos en la misma.
+   - `ESPERANDO espacio [A7] [A8]...`: cuando está lleno, los autos quedan
+     bloqueados en `sem_wait(espacios)`; la línea `SEMÁFOROS` muestra `espacios = 0`.
+   - `ESPERANDO barrera [A4]`: ya reservó lugar pero otro auto está en la barrera.
+   - `BARRERA` siempre con **un solo** auto (verde).
+   - `CONTADOR ✔ coincide` todo el tiempo y resumen con todas las marcas ✔.
 4. **Probar otra configuración** para demostrar que no es casualidad:
    ```bash
    ./estacionamiento 20 5
    ./estacionamiento 5 1     # con 1 espacio se ve una fila perfecta
    ```
-5. (Opcional) En otra terminal, mientras corre, mostrar que son procesos reales:
+5. `make comparar` ejecuta las dos versiones seguidas (pide Enter entre una y otra).
+6. (Opcional) En otra terminal, mientras corre, mostrar que son procesos reales:
    ```bash
    ps -o pid,ppid,stat,cmd -C estacionamiento
    ```
@@ -190,8 +195,23 @@ Para esperar a que todos los autos terminen antes de mostrar el resumen y
 liberar los semáforos, y para que los hijos terminados no queden como
 **procesos zombi**.
 
-**¿Por qué la salida no se mezcla entre procesos?**
-Cada línea se arma completa en un buffer y se imprime con un solo `write()`.
+**¿Quién dibuja el panel? ¿No se mezcla la salida de 10 procesos?**
+Los autos no imprimen nada: solo cambian su estado y anotan eventos en la
+memoria compartida. El **padre** es el único que dibuja: cada 0,05 s toma una
+"foto" del estado (dentro de `mutex_estado`, para no leer a mitad de un cambio)
+y redibuja la pantalla. El código del panel está aparte, en `panel.c`, y no
+forma parte de la sincronización del estacionamiento.
+
+**¿Los tiempos son realistas?**
+Sí, a escala 1:200 (`tiempos.h`): cruzar la barrera 10 s reales = 0,05 s, estar
+estacionado de 10 min a 1 h = 3 a 18 s. El panel muestra también la hora real
+equivalente. La única pausa artificial es la de `ocupados++` en la versión sin
+sincronización, que existe solo para agrandar la ventana de la condición de carrera.
+
+**¿Por qué a veces hay autos esperando y casillas libres?**
+Porque el semáforo `espacios` cuenta **reservas**, no casillas pintadas: un auto
+que espera la barrera ya reservó su lugar, y uno que está saliendo todavía no lo
+devolvió. La línea `SEMÁFOROS` del panel muestra el valor real del contador.
 
 **¿Por qué la versión sin sincronización a veces no falla?**
 Porque la condición de carrera depende del momento exacto en que el planificador

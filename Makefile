@@ -1,24 +1,26 @@
 CC     = gcc
 CFLAGS = -Wall -Wextra -std=gnu99 -pthread
 BINS   = estacionamiento sin_sincronizacion
+DEPS   = panel.c panel.h zonas.h tiempos.h
 
 all: $(BINS)
 
-%: %.c
-	$(CC) $(CFLAGS) -o $@ $<
+%: %.c $(DEPS)
+	$(CC) $(CFLAGS) -o $@ $< panel.c
 
-# Version correcta: semaforos POSIX entre procesos
+# Version correcta: semaforos POSIX entre procesos (2000 autos)
 run: estacionamiento
-	./estacionamiento 10 3
+	./estacionamiento
 
 # Version sin sincronizacion: muestra la condicion de carrera
 run-sin: sin_sincronizacion
-	./sin_sincronizacion 10 3
+	./sin_sincronizacion
 
 comparar: $(BINS)
-	-./sin_sincronizacion 10 3
+	-./sin_sincronizacion
 	@echo
-	./estacionamiento 10 3
+	@read -p "  Presione Enter para ver la version con semaforos..." _
+	./estacionamiento
 
 clean:
 	rm -f $(BINS)

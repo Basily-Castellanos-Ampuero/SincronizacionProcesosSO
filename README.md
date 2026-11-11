@@ -21,7 +21,26 @@ Se incluyen dos programas:
 - Llegan **N autos** (por defecto 10) en momentos distintos.
 - La barrera de entrada/salida es **una sola**: solo un auto puede cruzarla a la vez.
 - Si el estacionamiento está lleno, el auto **espera** (bloqueado) hasta que otro salga.
-- Cada auto se queda estacionado un tiempo aleatorio (1 a 3 s) y luego se va.
+- Cada auto se queda estacionado un tiempo aleatorio (de 10 minutos a 1 hora,
+  en tiempo real) y luego se va.
+
+### Tiempos y escala
+
+La simulación corre a **escala 1:200**: 1 segundo de simulación equivale a 200
+segundos reales (3 min 20 s). Todos los tiempos están en `tiempos.h`, escritos en
+segundos reales, y la macro `SEG()` los convierte:
+
+| Acción | Tiempo real | En la simulación |
+|---|---|---|
+| Cruzar la barrera (entrada o salida) | 10 s | 0,05 s |
+| Buscar el espacio y estacionar | 30 s | 0,15 s |
+| Tiempo estacionado | 10 min a 1 h | 3 a 18 s |
+| Llegadas, versión con semáforos (tráfico normal) | un auto cada ~1,5 min | uno cada ~0,45 s |
+| Llegadas, versión sin sincronización (hora punta) | todos en 2 min | todos en 0,6 s |
+
+Para que la demo vaya más lenta o más rápida basta con cambiar `ESCALA` en
+`tiempos.h`. El panel muestra el tiempo simulado y el **tiempo real** equivalente
+(h:mm:ss); los eventos también se muestran con la hora real.
 
 ## 2. Procesos que intervienen
 
@@ -31,7 +50,8 @@ Se incluyen dos programas:
                  │  - crea memoria compartida    │
                  │  - inicializa los semáforos   │
                  │  - lanza N hijos con fork()   │
-                 │  - espera a todos con wait()  │
+                 │  - dibuja el panel en vivo    │
+                 │  - espera a todos (waitpid)   │
                  │  - imprime el resumen         │
                  └──────────────┬────────────────┘
           fork()     fork()     │     fork()          fork()
@@ -40,11 +60,12 @@ Se incluyen dos programas:
   Auto 1     Auto 2     Auto 3      ...       Auto N      (procesos hijo)
 ```
 
-- **Padre**: no conduce ningún auto; solo prepara los recursos, crea los hijos,
-  los espera (evitando procesos zombi) y verifica el resultado.
+- **Padre**: no conduce ningún auto; prepara los recursos, crea los hijos,
+  dibuja el panel mientras corren, los espera (evitando procesos zombi) y
+  verifica el resultado.
 - **Hijos (autos)**: cada uno ejecuta la función `auto_proceso(id)` y termina.
 
-Cada línea de la salida muestra el **PID** del proceso, así se comprueba que son
+Cuando un auto llega, el evento muestra su **PID**, así se comprueba que son
 procesos distintos.
 
 ## 3. Recursos compartidos y sincronización
@@ -99,7 +120,7 @@ Operaciones usadas:
  sem_post(barrera)          ┘
      │
      ▼
- ESTACIONADO (1-3 s)        ← fuera de toda sección crítica, varios autos a la vez
+ ESTACIONADO (10 min a 1 h) ← fuera de toda sección crítica, varios autos a la vez
      │
      ▼
  sem_wait(barrera)          ┐
@@ -128,7 +149,7 @@ Requisitos: Linux (o WSL), `gcc` y `make`.
 make                 # compila los dos programas
 make run-sin         # ejecuta la versión SIN sincronización (muestra el error)
 make run             # ejecuta la versión CON semáforos (todo correcto)
-make comparar        # ejecuta las dos seguidas
+make comparar        # ejecuta las dos seguidas (pide Enter entre una y otra)
 make clean           # borra los ejecutables
 ```
 
@@ -142,48 +163,76 @@ Con parámetros propios:
 
 ## 6. Cómo leer la salida
 
-### Versión con semáforos
+Al ejecutarse en una terminal, el programa muestra un **panel que se redibuja en
+vivo** (el padre lo actualiza cada 0,05 s). Ejemplo de la versión con semáforos:
 
 ```
-[t= 0.98s] Auto  3 ESTACIONA en espacio 3   ocupados 3/3  [A1 ][A2 ][A3 ]
-[t= 1.36s] Auto  5 (PID 22207) LLEGA
-[t= 1.36s] Auto  5 ESPERA: estacionamiento lleno
-[t= 1.69s] Auto  2 SALE del espacio 2       ocupados 2/3  [A1 ][ - ][A3 ]
-[t= 1.89s] Auto  4 cruza la barrera de ENTRADA
-...
-=== Resumen ===
-Autos atendidos         : 10 de 10
-Maximo dentro a la vez  : 3 (capacidad 3)
-Ocupados al final       : 0
-Resultado               : OK, nunca se supero la capacidad ni se compartio un espacio
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ESTACIONAMIENTO · CON SEMÁFOROS    simulación  21.7 s  ·  tiempo real 1:12:16
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  LLEGANDO    —
+  ESPERANDO   espacio  [A7] [A8] [A9] [A10]
+              barrera  —
+
+  BARRERA     ━━━━━━━━  libre
+
+              ┌───────┬───────┬───────┐
+  ESPACIOS    │  A4   │  A6   │  A5   │
+              │  #1   │  #2   │  #3   │
+              └───────┴───────┴───────┘
+
+  OCUPACIÓN   ██ ██ ██  3/3 dentro
+  CONTADOR    ocupados = 3   ✔ coincide
+  SEMÁFOROS   espacios = 0   barrera = 1   (espacios en 0: el que llega espera)
+  ATENDIDOS   3 de 10
+
+  ── Últimos eventos ─────────────────────────────────────────────
+  0:57:44  A1 deja el espacio #1 y sale
+  0:57:54  A5 cruza la barrera de entrada
+    ...
 ```
 
-- `[t=...]` tiempo desde el inicio.
-- `[A1 ][ - ][A3 ]` dibujo del estacionamiento: qué auto está en cada espacio.
-- Cuando está lleno (3/3), los autos que llegan **esperan**; en cuanto uno sale,
-  entra el siguiente.
-- Nunca aparecen dos autos en el mismo espacio ni más de 3 dentro.
+| Zona | Qué muestra |
+|---|---|
+| `LLEGANDO` | Autos (procesos) que todavía no llegan. |
+| `ESPERANDO espacio` | Autos bloqueados en `sem_wait(espacios)` porque está lleno (amarillo). |
+| `ESPERANDO barrera` | Autos que ya reservaron lugar y esperan que la barrera se libere. |
+| `BARRERA` | Quién la está cruzando: `▶` entra, `◀` sale. En verde si es uno solo, en rojo si son varios. |
+| `ESPACIOS` | Una casilla por espacio: `A4` = auto 4, `libre`, o `2 AUTOS` en rojo si hay choque. |
+| `OCUPACIÓN` | Un bloque `██` por auto dentro; bloques rojos y `¡SOBRECUPO!` si se supera la capacidad. |
+| `CONTADOR` | Valor de la variable compartida `ocupados` y si coincide con los autos realmente dentro. |
+| `SEMÁFOROS` | Valor actual de `espacios` y `barrera` (en la versión sin sincronización: ninguno). |
+| `Últimos eventos` | Las 8 acciones más recientes, con color según el tipo. |
 
-### Versión sin sincronización
+Al terminar se imprime un **resumen** con ✔ / ✘:
 
 ```
-[t= 0.46s] Auto  8 ESTACIONA en espacio 3   contador=3  autos dentro=3/3
-[t= 0.55s] Auto  5 CHOQUE: el espacio 1 ya lo ocupa el auto 1
-[t= 0.56s] Auto  5 ESTACIONA en espacio 1   contador=4  autos dentro=4/3
-...
-=== Resumen ===
-Maximo dentro a la vez  : 5 (capacidad 3)
-Choques por un espacio  : 6
-Contador al final       : -3 (deberia ser 0)
-ERROR: se supero la capacidad del estacionamiento
-ERROR: dos autos usaron el mismo espacio
-ERROR: el contador quedo inconsistente (actualizaciones perdidas)
+   RESUMEN
+  ✔ Autos atendidos: 10 de 10
+  ✔ Máximo dentro a la vez: 3 (capacidad 3)
+  ✔ Contador al final: 0
+  ✔ Nunca se superó la capacidad ni se compartió un espacio
 ```
 
-Los tres errores son consecuencia de la **condición de carrera**: varios procesos
-leen y modifican los mismos datos al mismo tiempo sin coordinación. Como depende
-del momento exacto en que corre cada proceso, los números cambian en cada
-ejecución (si en alguna no se nota el error, basta con ejecutar otra vez).
+En la versión **sin sincronización** se ven los errores en el mismo panel: la
+barrera en rojo con varios autos a la vez, casillas `2 AUTOS`, `¡SOBRECUPO!` y el
+contador que no coincide. El resumen termina, por ejemplo, así:
+
+```
+  ✔ Autos atendidos: 10 de 10
+  ✘ Máximo dentro a la vez: 8 (capacidad 3) → se superó la capacidad
+  ✘ Choques por un mismo espacio: 6
+  ✘ Contador al final: -3 (debería ser 0) → actualizaciones perdidas
+```
+
+Los errores dependen del momento exacto en que corre cada proceso (**condición
+de carrera**), así que los números cambian en cada ejecución; si en alguna no se
+nota, basta con ejecutar otra vez.
+
+**Modo texto:** si la salida no es una terminal (por ejemplo
+`./estacionamiento | cat` o `> salida.txt`), en lugar del panel se imprime un
+evento por línea, útil para copiar en un informe. `NO_COLOR=1` desactiva los colores.
 
 > En `sin_sincronizacion.c` hay contadores atómicos (`dentro_real`, `max_real`,
 > `choques`). Son solo un "medidor" para poder demostrar el error; no forman parte
@@ -197,6 +246,8 @@ sincronizacionProcesos/
 ├── README.md                 ← este documento
 ├── estacionamiento.c         ← solución con semáforos
 ├── sin_sincronizacion.c      ← versión con condición de carrera
+├── panel.c / panel.h         ← dibujo del panel en la terminal (no sincroniza nada)
+├── tiempos.h                 ← tiempos reales y escala de la simulación
 └── docs/
     └── GUIA_EXPOSICION.md    ← teoría, guion de la demo y preguntas
 ```
